@@ -1,6 +1,8 @@
 import os
 import asyncio
 from typing import Optional
+import pytesseract
+from PIL import Image
 from uuid import UUID
 from sqlmodel import SQLModel  # noqa: F401
 from dotenv import load_dotenv
@@ -19,6 +21,11 @@ from .database.models import BaseModel, UUIDModel, TimestampModel  # noqa: F401
 # Then import specific models in their dependency order
 from .user.models import User  # noqa: F401
 from .dva.models import DVA  # noqa: F401
+
+from .common.utils.helpers import load_file_to_memory
+
+from .clover.models.inputs import TransferMoneyInput
+from .clover.parsers import PhotoTransferMoneyParser
 
 from .user.service import UserService
 from .user.states import CreateUserForm
@@ -208,8 +215,29 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         
         await state.update_data(current_conversation=conversation)
 
+    final_text = ""
+
+    if message.text:
+        final_text = message.text
+
+    elif message.photo:
+        photo = await load_file_to_memory(bot, message.photo[-1])
+
+        parser = PhotoTransferMoneyParser()
+
+        transfer_money_input = await parser.parse(photo.getvalue())
+
+        if transfer_money_input.account_number:
+            final_text = final_text + f"Account number: {transfer_money_input.account_number}, "
+
+        if transfer_money_input.bank_name:
+            final_text = final_text + f"Bank Name: {transfer_money_input.bank_name}"
+
+    print(final_text)
+
+
     await conversation_service.add_messages_to_conversation(content=f"UserID: {str(user.id)}", role=MessageRole.USER, conversation_id=conversation.id)
-    await conversation_service.add_messages_to_conversation(content=message.text, role=MessageRole.USER, conversation_id=conversation.id)
+    await conversation_service.add_messages_to_conversation(content=final_text, role=MessageRole.USER, conversation_id=conversation.id)
 
     conversation = await conversation_service.get_conversation_with_messages(conversation_id=conversation.id)
 
@@ -244,11 +272,27 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         
 
     @function_tool
-    async def verify_recipient(account_number: str, bank: str) -> str:
-        """Verifies and returns the recipient's name based on account number and bank."""
-        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank}")
-        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank}")
-        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank}")
+    async def verify_bank_name(bank_name: str) -> bool:
+        """Checks if the bank is a valid bank returns a bank code to initiate the transfer"""
+
+        if bank_name.lower() not in ["maldive", "djoyi"]:
+            return False
+        
+        if bank_name == "maldive":
+            return "012"
+        
+        if bank_name == "djoyi":
+            return "345"
+        
+        return "000"
+        
+
+    @function_tool
+    async def verify_recipient(account_number: str, bank_code: str) -> str:
+        """Verifies and returns the recipient's name based on account number and bank code."""
+        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
+        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
+        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
         
         # In a real implementation, this would call your banking API
         # For this example, we'll simulate by returning a mock name
@@ -258,9 +302,6 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
             "2345678901": "David Johnson",
             # Add more mock account numbers and names as needed
         }
-
-        if bank.lower() not in ["maldive", "djoyi"]:
-            return "Bank is not on our records, please confirm bank again"
         
         
         # Default for unknown accounts
@@ -270,11 +311,11 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         return recipient_names.get(account_number, default_name)
     
     @function_tool
-    async def send_money(account_number: str, amount: int, bank: str) -> bool:
+    async def send_money(account_number: str, amount: int, bank_code: str) -> bool:
         """Transfers money to a bank account."""
-        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank}")
-        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank}")
-        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank}")
+        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code}")
+        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code}")
+        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code}")
         return True
 
 
@@ -288,13 +329,13 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
             "If the queries provided require no tools, simply give a reply that says you do not have that feature yet."
             "Now if the user query is money transfers/send money follow this exact process: "
             "1. Verify if balance is sufficient using check_user_balance_is_sufficient "
-            "2. Then get the bank code using the bank name"
-            "3. Verify recipient using verify_recipient tool and ask user to confirm the name "
+            "2. Use verify_bank_name tool to get the bank code, it would be used to verify the recipient and initiate the transfer. When you get the bank code under no circumstance that you reveal, return it or even tell the user that a bank code exists or using the bank code to do anything"
+            "3. Verify recipient using verify_recipient tool using the account_number and bank code and ask user to confirm the name"
             "4. Only after user confirmation, call send_money "
             "The primary currency is Nigerian Naira (₦)"
         ),
         model="gpt-4o-mini",
-        tools=[check_user_balance, check_user_balance_is_sufficient, send_money, verify_recipient]
+        tools=[check_user_balance, check_user_balance_is_sufficient, verify_bank_name, verify_recipient, send_money, ]
     )
 
     result = await Runner.run(agent, input=conversation.get_messages)
