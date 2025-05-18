@@ -1,8 +1,6 @@
 import os
 import asyncio
 from typing import Optional
-import pytesseract
-from PIL import Image
 from uuid import UUID
 from sqlmodel import SQLModel  # noqa: F401
 from dotenv import load_dotenv
@@ -22,10 +20,13 @@ from .database.models import BaseModel, UUIDModel, TimestampModel  # noqa: F401
 from .user.models import User  # noqa: F401
 from .dva.models import DVA  # noqa: F401
 
-from .common.utils.helpers import load_file_to_memory
+from .paystack.client import PaystackClient
+from .paystack.error import PaystackException
+
+from .common.utils.helpers import load_file_to_memory, ogg_to_wav_bytes
 
 from .clover.models.inputs import TransferMoneyInput
-from .clover.parsers import PhotoTransferMoneyParser
+from .clover.parsers import PhotoTransferMoneyParser, BankCodeParser
 
 from .user.service import UserService
 from .user.states import CreateUserForm
@@ -204,6 +205,7 @@ async def command_deposit_handler(message: Message) -> None:
 
 @dp.message()
 async def handle_any_message(message: Message, state: FSMContext, user_service:  UserService, conversation_service: ConversationService):
+
     data = await state.get_data()
 
     user = await user_service.get_user_by_telegram_id(telegram_id=message.from_user.id)
@@ -225,7 +227,7 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
 
         parser = PhotoTransferMoneyParser()
 
-        transfer_money_input = await parser.parse(photo.getvalue())
+        transfer_money_input = await parser.parse(photo)
 
         if transfer_money_input.account_number:
             final_text = final_text + f"Account number: {transfer_money_input.account_number}, "
@@ -233,7 +235,20 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         if transfer_money_input.bank_name:
             final_text = final_text + f"Bank Name: {transfer_money_input.bank_name}"
 
-    print(final_text)
+    if message.voice:
+        voice = await load_file_to_memory(bot, message.voice)
+
+        voice_wav_io = ogg_to_wav_bytes(voice)
+
+        from openai import OpenAI
+        client = OpenAI()
+
+        transcription = client.audio.transcriptions.create(
+            model="gpt-4o-transcribe", 
+            file=voice_wav_io,
+        )
+
+        final_text = transcription.text
 
 
     await conversation_service.add_messages_to_conversation(content=f"UserID: {str(user.id)}", role=MessageRole.USER, conversation_id=conversation.id)
@@ -272,43 +287,48 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         
 
     @function_tool
-    async def verify_bank_name(bank_name: str) -> bool:
+    async def verify_bank_name(bank_name: str) -> str:
         """Checks if the bank is a valid bank returns a bank code to initiate the transfer"""
+        paystack_client = PaystackClient()
 
-        if bank_name.lower() not in ["maldive", "djoyi"]:
-            return False
+        banks = (await paystack_client.get_banks()).data
+
+        bank_data = ""
+
+        for bank in banks:
+           bank_data = bank_data + f"Bank Name: {bank.name} => Bank Code: {bank.code}\n"
+
+        bank_code_parser = BankCodeParser()
+
+        bank_code = bank_code_parser.parse(bank_name, bank_data).bank_code
         
-        if bank_name == "maldive":
-            return "012"
-        
-        if bank_name == "djoyi":
-            return "345"
-        
-        return "000"
+        return bank_code
         
 
     @function_tool
     async def verify_recipient(account_number: str, bank_code: str) -> str:
-        """Verifies and returns the recipient's name based on account number and bank code."""
+        """Verifies and returns the recipient's name based on account number and bank code. The bank_code is a """
         print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
         print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
         print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
         
-        # In a real implementation, this would call your banking API
-        # For this example, we'll simulate by returning a mock name
-        recipient_names = {
-            "0123456789": "John Doe",
-            "1234567890": "Mary Smith",
-            "2345678901": "David Johnson",
-            # Add more mock account numbers and names as needed
-        }
+        try:
+            paystack_client = PaystackClient()
+
+            resolve_account = (await paystack_client.resolve_account(account_number=account_number, bank_code=bank_code)).data
+
+        except PaystackException as error:
+            print(error)
+            return "Sorry! Could not resolve the account name, please check the account number and bank name again"
         
-        
-        # Default for unknown accounts
-        default_name = "Unknown Recipient"
-        
-        # Return the recipient name or default
-        return recipient_names.get(account_number, default_name)
+
+        await conversation_service.add_messages_to_conversation(
+                content=f"New Bank Code To Transfer: {bank_code}", 
+                role=MessageRole.ASSISTANT, 
+                conversation_id=conversation.id
+            )
+            
+        return f"Account Name: {resolve_account.account_name}, Account Number: {resolve_account.account_number}, Bank Code: {bank_code}"
     
     @function_tool
     async def send_money(account_number: str, amount: int, bank_code: str) -> bool:
@@ -322,20 +342,39 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
     agent = Agent(
         name="Clover AI Assistant",
         instructions=(
-            "You're a Clover, the AI assistant for Cleva Banking."
-            "Use the provided tools  whenever possible."
-            "Do not rely on your own knowledge."
-            "Instead use your tools"
-            "If the queries provided require no tools, simply give a reply that says you do not have that feature yet."
-            "Now if the user query is money transfers/send money follow this exact process: "
-            "1. Verify if balance is sufficient using check_user_balance_is_sufficient "
-            "2. Use verify_bank_name tool to get the bank code, it would be used to verify the recipient and initiate the transfer. When you get the bank code under no circumstance that you reveal, return it or even tell the user that a bank code exists or using the bank code to do anything"
-            "3. Verify recipient using verify_recipient tool using the account_number and bank code and ask user to confirm the name"
-            "4. Only after user confirmation, call send_money "
-            "The primary currency is Nigerian Naira (₦)"
+            "You're Clover, the AI assistant for Cleva Banking. "
+            "Use the provided tools whenever possible and do not rely on your own knowledge. "
+            "If the queries provided require no tools, simply give a reply that says you do not have that feature yet. "
+            
+            "For money transfers/send money, follow this exact process: "
+            
+            "1. Make sure the user has supplied the Account Number, Bank Name, and the Amount they want to transfer. "
+            "Ask for any missing information before proceeding. "
+            
+            "2. Verify if balance is sufficient using check_user_balance_is_sufficient. "
+            "If the balance is insufficient, inform the user and stop the process. "
+            
+            "3. IMPORTANT: Convert the bank name to a bank code using the verify_bank_name tool. "
+            "Store this bank code value in your conversation memory. "
+            "Never display the bank code to the user or mention its existence. "
+            
+            "4. Use the verify_recipient tool with the account_number and the bank_code obtained in step 3 (NOT the bank name). "
+            "Show the account holder's name to the user and ask for confirmation. "
+            
+            "5. CRITICAL: Use the EXACT SAME bank_code from step 3 when calling the send_money tool. "
+            "Do NOT recalculate or look up the bank code again. "
+            "For example, if you determined the bank code is '070' in step 3, use '070' in this step as well. "
+            "Call the send_money tool with the account number, amount, and the SAME bank_code used for verification. "
+            
+            "The primary currency is Nigerian Naira (₦). "
+            
+            "STATE MANAGEMENT: You must maintain state throughout the conversation. "
+            "Once you obtain a bank code for a specific bank, you must use the same bank code "
+            "throughout all subsequent steps of that particular transaction. DO NOT recalculate "
+            "or look up the bank code multiple times for the same transaction."
         ),
         model="gpt-4o-mini",
-        tools=[check_user_balance, check_user_balance_is_sufficient, verify_bank_name, verify_recipient, send_money, ]
+        tools=[check_user_balance, check_user_balance_is_sufficient, verify_bank_name, verify_recipient, send_money]
     )
 
     result = await Runner.run(agent, input=conversation.get_messages)

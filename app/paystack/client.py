@@ -1,8 +1,10 @@
 import httpx
 from typing import Optional
 from app.settings import settings
+from functools import lru_cache
 from app.common.exception import TelegramBankingException
-from .schemas.response import PaystackCreatedCustomerSuccessResponse, PaystackCreatedDedicatedAccountResponse
+from .error import PaystackException
+from .schemas.response import PaystackCreatedCustomerSuccessResponse, PaystackCreatedDedicatedAccountResponse, PaystackErrorResponse,  PaystackGetBanksResponse, PaystackResolveBankResponse
 
 class PaystackClient:
     def __init__(self):
@@ -27,18 +29,19 @@ class PaystackClient:
                     headers=self.headers,
                     params=params,
                     timeout=self.timeout
+
                 )
                 response.raise_for_status()
                 return response.json()
 
-            except httpx.HTTPError as error:
-                print(error)
-                return None
+            except httpx.HTTPError:
+                message = dict(response.json()).get("message")
+                raise PaystackException(message=message)
 
             except Exception as error:
                 print(error)
                 # Use Sentry to log unexpected errors
-                raise
+                raise error
 
     async def post(self, path=None, data=None, json=None):
         url = f"{self.base_url}{path}" if path is not None else f"{self.base_url}"
@@ -55,30 +58,29 @@ class PaystackClient:
                 response.raise_for_status()
                 return response.json()
 
-            except httpx.HTTPError as error:
-                print(error)
-                print(response.json())
-                return None
+            except httpx.HTTPError:
+                message = dict(response.json()).get("message")
+                raise PaystackException(message=message)
 
             except Exception as error:
                 print(error)
                 # Use Sentry to log unexpected errors
                 raise
 
+    @lru_cache
+    async def get_banks(self, currency: str = "NGN") -> PaystackGetBanksResponse:
 
-    async def get_banks(self, currency: str= "NGN"):
-
-        data = self.get(
+        data = await self.get(
             path="/bank/", 
             params={
                 "currency": currency
             }
         )
 
-        return data
+        return PaystackGetBanksResponse(**data)
 
-
-    async def verify_bank(self, account_number: str, bank_code: str):
+    # @lru_cache
+    async def resolve_account(self, account_number: str, bank_code: str):
 
         data = await self.get(
             path="/bank/resolve", 
@@ -88,7 +90,7 @@ class PaystackClient:
             } 
         )
 
-        return data
+        return PaystackResolveBankResponse(**data)
 
     async def create_transfer_recipient(self, *, name: str, account_number: str, bank_code: str, type: str = "nuban", currency: str = "NGN"):
 
