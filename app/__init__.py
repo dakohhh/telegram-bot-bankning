@@ -1,14 +1,19 @@
 import os
 import asyncio
+import threading
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
+import aio_pika
 from sqlmodel import SQLModel  # noqa: F401
 from dotenv import load_dotenv
+from .rabbitmq.client import RabbitMQClient, QueueWrapper, AsyncRabbitMQClient
 from aiogram import Bot, Dispatcher, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command
 from aiogram.types import Message
+
+from app.settings  import settings
 
 from app.conversation.models import Conversation, MessageRole
 from app.conversation.service import ConversationService
@@ -16,6 +21,8 @@ from app.conversation.service import ConversationService
 # Initialize database models and import them in correct order
 # First import base models
 from .database.models import BaseModel, UUIDModel, TimestampModel  # noqa: F401
+
+from .database.config import get_session
 # Then import specific models in their dependency order
 from .user.models import User  # noqa: F401
 from .dva.models import DVA  # noqa: F401
@@ -47,13 +54,14 @@ dp.message.middleware(CustomAiogramMiddleware())
 
 @dp.message(Command("start"))
 async def command_start_handler(message: Message, state: FSMContext, user_service: UserService, conversation_service: ConversationService) -> None:
+    print(message.chat.id)
     user = await user_service.get_user_by_telegram_id(telegram_id=message.from_user.id)
     if user:
         await message.answer(
             f"Welcome back {user.first_name} {user.last_name} 👋\n\n"
             "1. 💰 Check balance — type `/balance`\n"
             "2. 📥 Deposit funds — type `/deposit`\n"
-            "3. 💸 Send money — type `/send`\n"
+            "3. For transfers, just interact with the agent 😉."
         )
         conversation = await conversation_service.create_conversation(user_id=user.id)
 
@@ -67,6 +75,25 @@ async def command_start_handler(message: Message, state: FSMContext, user_servic
             "To open your cleva account — type `/register`\n"
         )
 
+
+@dp.message(Command("deposit"))
+async def command_deposit_handler(message: Message, state: FSMContext, user_service: UserService, conversation_service: ConversationService) -> None:
+    user = await user_service.get_user_by_telegram_id(telegram_id=message.from_user.id)
+    if user:
+        dva = await user_service.get_user_dva(user.id)
+        await message.answer(
+            "Your Account Information 💲\n\n"
+            f"1. Account Number  — {dva.account_number}\n"
+            f"1. Account Name  — {dva.account_name}\n"
+            f"1. Bank Name — {dva.bank_name}`\n"
+            " Send funds to to this account to make a deposit `\n"
+        )
+    else:
+        await message.answer(
+            "Oops.. looks like you haven't registered on Cleva Banking 😢\n"
+            "To open your cleva account — type `/register`\n"
+        )
+
 @dp.message(Command("register"))
 async def command_register_handler(message: Message, session: CustomAsyncSession) -> None:
     user_service = UserService(session=session)
@@ -76,7 +103,7 @@ async def command_register_handler(message: Message, session: CustomAsyncSession
         await message.answer(
             "You already have an account with us 👋\n"
         )
-        await command_dashboard_handler()
+        await command_help_handler(message)
     else:
 
         # Start the FSM to collect email and phone number 
@@ -143,10 +170,9 @@ async def proceed_registration(message: Message, state: FSMContext, user_service
             first_name=message.from_user.first_name, 
             last_name=message.from_user.last_name,
             phone_number=data["phone_number"],
-            email=data["email"]
+            email=data["email"],
+            chat_id=str(message.chat.id)
         )
-
-        print(new_user.model_dump())
 
         await message.answer(
             "Account Created Successfully ❤️\n"
@@ -162,7 +188,7 @@ async def proceed_registration(message: Message, state: FSMContext, user_service
         await message.answer(
             "1. 💰 Check balance — type `/balance`\n"
             "2. 📥 Deposit funds — type `/deposit`\n"
-            "3. 💸 Send money — type `/send`\n"
+            "3. For transfers, just interact with the agent 😉."
         )
 
 
@@ -180,35 +206,34 @@ async def command_balance_handler(message: Message, session: CustomAsyncSession)
         await message.answer(f"Your balance 💵 is:  {user.balance}\n")
 
 
-@dp.message(Command("dashboard"))
-async def command_dashboard_handler(message: Message) -> None:
+@dp.message(Command("help"))
+async def command_help_handler(message: Message) -> None:
     print(message.from_user.id)
     await message.answer(
         "Here's what I can do for you:\n"
         "1. 📝 Register account — type `/register`\n"
         "2. 💰 Check balance — type `/balance`\n"
         "3. 📥 Deposit funds — type `/deposit`\n"
-        "4. 💸 Send money — type `/send`\n",
+        "3. For transfers, just interact with the agent 😉."
+
     )
 
-
-@dp.message(Command("deposit"))
-async def command_deposit_handler(message: Message) -> None:
-    print(message.from_user.id)
-    await message.answer(
-        "Here's what I can do for you:\n"
-        "1. 📝 Register account — type `/register`\n"
-        "2. 💰 Check balance — type `/balance`\n"
-        "3. 📥 Deposit funds — type `/deposit`\n"
-        "4. 💸 Send money — type `/send`\n",
-    )
 
 @dp.message()
 async def handle_any_message(message: Message, state: FSMContext, user_service:  UserService, conversation_service: ConversationService):
 
+    print(message.text)
+
     data = await state.get_data()
 
     user = await user_service.get_user_by_telegram_id(telegram_id=message.from_user.id)
+
+    if not user:
+        await message.answer(
+            "Looks like you haven't opened an account with us 😣\n"
+            "To open your cleva account — type `/register`"
+        )
+        return
 
     conversation: Optional[Conversation] = data.get("current_conversation")
 
@@ -331,11 +356,20 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         return f"Account Name: {resolve_account.account_name}, Account Number: {resolve_account.account_number}, Bank Code: {bank_code}"
     
     @function_tool
-    async def send_money(account_number: str, amount: int, bank_code: str) -> bool:
+    async def send_money(account_name: str, account_number: str, amount: int, bank_code: str) -> bool:
         """Transfers money to a bank account."""
-        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code}")
-        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code}")
-        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code}")
+        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
+        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
+        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")        
+
+        paystack_client = PaystackClient()
+
+        transfer_recipient = (await paystack_client.create_transfer_recipient(name=account_name,account_number=account_number, bank_code=bank_code)).data
+
+        transfer = await paystack_client.initiate_transfer(recipient_code=transfer_recipient.recipient_code, amount=(amount * 100), reference=str(uuid4()))
+
+        print(transfer)
+
         return True
 
 
@@ -343,6 +377,14 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         name="Clover AI Assistant",
         instructions=(
             "You're Clover, the AI assistant for Cleva Banking. "
+            "You are STRICTLY a banking assistant that can ONLY help with cleva banking services. "
+            
+            "STRICT POLICY: You can ONLY respond to banking related queries. "
+            "For ANY non-banking queries (like entertainment, songs, weather, general knowledge, etc.), "
+            "respond with: 'I'm your banking assistant and can only help with banking services. "
+            "I can check your balance, help with transfers, or provide account information. "
+            "How can I help you with your banking needs today?' "
+
             "Use the provided tools whenever possible and do not rely on your own knowledge. "
             "If the queries provided require no tools, simply give a reply that says you do not have that feature yet. "
             
@@ -385,10 +427,60 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
 
     await message.answer(result.final_output)
 
+async def rabbitmq_listener(session):
+    async def on_deposit_call_back(message: aio_pika.abc.AbstractIncomingMessage, session: CustomAsyncSession):
+            import json
+            json_data =  json.loads(message.body())
 
-# Run the bot
-async def run_bot() -> None:
-    await dp.start_polling(bot)
+            data = dict(json_data)
+
+            customer_code  = data["customer_code"]
+            amount = data["amount"]
+
+            
+
+
+
+    rabbitmq_client = AsyncRabbitMQClient(settings.RABBITMQ_URL)
+    await rabbitmq_client.connect()
+    
+    
+    # Declare the exchange
+    exchange = await rabbitmq_client.declare_exchange("charge")
+    
+    # Declare the queue
+    queue = await rabbitmq_client.declare_queue(queue_name="charge_deposit_queue")
+    
+    # Bind the queue to the exchange
+    await rabbitmq_client.bind_queue(queue, exchange=exchange, routing_key="charge.deposit")
+   
+    # Subscribe to the queue
+    await rabbitmq_client.subscribe([
+        QueueWrapper(q=queue, callback=on_deposit_call_back, callback_kwargs={"session": session})
+    ])
+    
+    return rabbitmq_client
+
+
+async def run_bot():
+    try:
+        # Create a task for the message listener
+        async for session in get_session():
+            rabbitmq_client = await rabbitmq_listener(session)
+            
+            # Start the bot
+            await dp.start_polling(bot)
+            
+            # Keep the connection running until the program is terminated
+            while True:
+                await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        print("Shutting down...")
+    finally:
+        # Clean up resources
+        if 'rabbitmq_client' in locals():
+            if rabbitmq_client.connection:
+                await rabbitmq_client.connection.close()
 
 if __name__ == "__main__":
     asyncio.run(run_bot())

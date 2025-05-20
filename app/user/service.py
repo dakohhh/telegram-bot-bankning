@@ -14,7 +14,8 @@ class UserService:
     async def register(
             self, 
             *, 
-            telegram_id: int, 
+            telegram_id: int,
+            chat_id: str,
             first_name: str, 
             last_name: str,
             email: str,
@@ -29,7 +30,8 @@ class UserService:
             last_name=last_name,
             telegram_id=telegram_id,
             phone_number=phone_number,
-            email=email
+            email=email,
+            chat_id=chat_id
         )
 
         new_user = await self.session.save(user)
@@ -73,6 +75,15 @@ class UserService:
         user = query.first()
 
         return user
+    
+
+    async def get_user_dva(self, user_id: UUID) -> DVA | None:
+
+        query = await self.session.exec(select(DVA).where(DVA.user_id == user_id))
+
+        dva = query.first()
+
+        return dva
 
     
     def check_if_user_registered(self, user_id: int,) -> None:

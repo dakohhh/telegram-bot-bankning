@@ -1,4 +1,6 @@
 from pydantic import BaseModel, Field
+
+from .transfer_recipient import TransferRecipient
 from .customer import Customer
 from .dva import DVA
 from .bank import Bank
@@ -27,3 +29,5 @@ class PaystackGetBanksResponse(PaystackSuccessResponse):
 class PaystackResolveBankResponse(PaystackSuccessResponse):
     data: ResolveAccount
 
+class PaystackCreateTransferRecipient(PaystackSuccessResponse):
+    data: TransferRecipient

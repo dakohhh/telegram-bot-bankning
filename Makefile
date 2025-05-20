@@ -2,7 +2,7 @@ message ?= "migration"
 # message ?= "migration-$(shell uuidgen)"
 
 run:
-	uvicorn app:app --reload
+	uvicorn server.main:app --reload
 
 migrations:
 	alembic revision --autogenerate -m "$(message)"

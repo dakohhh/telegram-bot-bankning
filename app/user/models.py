@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
 from sqlalchemy.sql import expression
 from ..database.models import BaseModel
-from sqlmodel import Field, Column, Boolean, Numeric, Relationship
+from sqlmodel import Field, Column, Boolean, Numeric, Relationship, BigInteger
 
 if TYPE_CHECKING:
     from ..dva.models import DVA
@@ -14,7 +14,8 @@ class User(BaseModel, table=True):
     last_name: str
     email: str = Field(unique=True)
     phone_number: str
-    telegram_id: int
+    telegram_id: int = Field(sa_column=Column(BigInteger()))
+    chat_id: str
     customer_code: str | None = Field(default=None, nullable=True)
     balance: Decimal = Field(sa_column=Column(Numeric(12, 2), default=Decimal("0.00")))
     is_active: bool = Field(default=True, sa_column=Column(Boolean, default=True, nullable=False, server_default=expression.true()))

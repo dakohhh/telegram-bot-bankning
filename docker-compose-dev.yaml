@@ -18,8 +18,22 @@ services:
         max-size: "10m" # Maximum size of log file
         max-file: "3" # Maximum number of log files
 
+  broker:
+    image: rabbitmq:3.11-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: user
+      RABBITMQ_DEFAULT_PASS: pass
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
 
 
 
 volumes:
   postgres_telegram_banking:
+  rabbitmq_data:

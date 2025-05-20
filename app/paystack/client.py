@@ -4,7 +4,7 @@ from app.settings import settings
 from functools import lru_cache
 from app.common.exception import TelegramBankingException
 from .error import PaystackException
-from .schemas.response import PaystackCreatedCustomerSuccessResponse, PaystackCreatedDedicatedAccountResponse, PaystackErrorResponse,  PaystackGetBanksResponse, PaystackResolveBankResponse
+from .schemas.response import PaystackCreatedCustomerSuccessResponse, PaystackCreatedDedicatedAccountResponse, PaystackErrorResponse, PaystackCreateTransferRecipient,  PaystackGetBanksResponse, PaystackResolveBankResponse
 
 class PaystackClient:
     def __init__(self):
@@ -94,29 +94,35 @@ class PaystackClient:
 
     async def create_transfer_recipient(self, *, name: str, account_number: str, bank_code: str, type: str = "nuban", currency: str = "NGN"):
 
+        payload = {
+            "name": name,
+            "type": type,
+            "currency": currency,
+            "bank_code": bank_code,
+            "account_number": account_number,
+        }
+
         data = await self.post(
             path="/transferrecipient/", 
-            data={
-                "name": name,
-                "type": type,
-                "currency": currency,
-                "bank_code": bank_code,
-                "account_number": account_number,
-            }
+            json=payload
         )
 
-        return data
+        return PaystackCreateTransferRecipient(**data)
+    
 
-    async def initiate_transfer(self, * , source: str = "balance", amount: float, reference: str, reason: str):
+    async def initiate_transfer(self, * , recipient_code: str, amount: int, reference: str, reason: Optional[str] = None, source: str = "balance"):
+
+        payload = {
+            "source": source,
+            "amount": amount,
+            "recipient": recipient_code,
+            "reference": reference,
+            "reason": "Transfer from Clover Banking" if not reason else reason
+        }
 
         response = await self.post(
             path="/transfer/", 
-            data={
-                "source": source,
-                "amount": amount,
-                "reference": reference,
-                "reason": reason
-            }
+            json=payload
         )
 
         return response
@@ -137,6 +143,21 @@ class PaystackClient:
             path="/dedicated_account",
             json=payload
         )
+
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
+        print(response)
 
         return PaystackCreatedDedicatedAccountResponse(**response)
     
@@ -169,8 +190,4 @@ class PaystackClient:
         )
 
         return PaystackCreatedCustomerSuccessResponse(**response)
-
-
-def handle_paystack(response: httpx.Response):
-    if response.json().get("code") == "insufficient_balance":
-        raise TelegramBankingException(message="You cannot withdraw now, please try again later")
+    
