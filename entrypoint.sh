@@ -6,7 +6,7 @@ set -o nounset
 
 # Function to check if Postgres is ready
 postgres_ready() {
-    python << END
+    poetry run python << END
 import sys
 import psycopg2
 from urllib.parse import urlparse
@@ -33,7 +33,7 @@ done
 echo >&2 "PostgreSQL is available"
 
 # Run the migrations
-alembic upgrade head
+poetry run alembic upgrade head
 
 # Run the bot
-exec python main.py
+exec poetry run python main.py
