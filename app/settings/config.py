@@ -48,14 +48,12 @@ class DevelopmentConfig(GlobalConfig):
     """Development environment specific configurations"""
 
     DEBUG: bool = True
-    REDIS_URL: str = Field("redis://localhost:6379/0", description="Local Redis instance")
     RABBITMQ_URL: str = Field("amqp://user:pass@localhost:5672", description="Local RabbitMQ instance")
 
 class ProductionConfig(GlobalConfig):
     """Production environment specific configurations with stricter settings"""
 
     DEBUG: bool = False
-    REDIS_URL: str = Field(..., env="REDIS_URI")
     RABBITMQ_URL: str = Field(..., env="RABBITMQ_URL")
     
 

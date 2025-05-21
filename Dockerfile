@@ -66,11 +66,11 @@ COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/pytho
 # Copy application code
 COPY --chown=appuser:appuser ./app ./app
 COPY --chown=appuser:appuser ./main.py ./main.py
-
+COPY --chown=appuser:appuser ./entrypoint.sh ./entrypoint.sh
 # Switch to non-root user
 USER appuser
 
-RUN ls
+RUN chmod +x ./entrypoint.sh
 
 # Command to run the application
-CMD ["python", "main.py"]
+ENTRYPOINT ["./entrypoint.sh"]
