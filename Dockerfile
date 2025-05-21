@@ -65,16 +65,12 @@ COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/pytho
 
 # Copy application code
 COPY --chown=appuser:appuser ./app ./app
+COPY --chown=appuser:appuser ./main.py ./main.py
 
 # Switch to non-root user
 USER appuser
 
-# Expose port
-EXPOSE 4000
-
-# Set healthcheck
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:4000/health || exit 1
+RUN ls
 
 # Command to run the application
-CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "4000"]
+CMD ["python", "main.py"]
