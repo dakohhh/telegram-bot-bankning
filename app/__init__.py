@@ -1,12 +1,13 @@
+from decimal import Decimal
 import os
 import asyncio
-import threading
 from typing import Optional
 from uuid import UUID, uuid4
 import aio_pika
-from sqlmodel import SQLModel  # noqa: F401
+from sqlmodel import SQLModel, select  # noqa: F401
 from dotenv import load_dotenv
-from .rabbitmq.client import RabbitMQClient, QueueWrapper, AsyncRabbitMQClient
+from .rabbitmq.client import QueueWrapper, AsyncRabbitMQClient
+from email_validator import  validate_email, EmailNotValidError
 from aiogram import Bot, Dispatcher, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -135,7 +136,14 @@ async def phone_contact_handler(message: Message, state: FSMContext) -> None:
 
 @dp.message(CreateUserForm.waiting_for_email)
 async def email_handler(message: Message, state: FSMContext) -> None:
-    email = message.text 
+    # Validate email
+    email = None
+    try:
+        email_info = validate_email(message.text)
+        email = email_info.normalized
+    except EmailNotValidError:
+        await message.answer("Oops..🥲 the email you sent isn't a valid one, please provide a valid one")
+        return
 
     print(f"Email received: {email}")
 
@@ -356,7 +364,7 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         return f"Account Name: {resolve_account.account_name}, Account Number: {resolve_account.account_number}, Bank Code: {bank_code}"
     
     @function_tool
-    async def send_money(account_name: str, account_number: str, amount: int, bank_code: str) -> bool:
+    async def send_money(user_id: str, account_name: str, account_number: str, amount: int, bank_code: str) -> bool:
         """Transfers money to a bank account."""
         print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
         print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
@@ -368,7 +376,11 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
 
         transfer = await paystack_client.initiate_transfer(recipient_code=transfer_recipient.recipient_code, amount=(amount * 100), reference=str(uuid4()))
 
+        # Store the transfer object in the database or something
         print(transfer)
+
+        # Decrement the user's balance
+        await user_service.decrement_balance(UUID(user_id), float(amount))
 
         return True
 
@@ -428,17 +440,33 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
     await message.answer(result.final_output)
 
 async def rabbitmq_listener(session):
-    async def on_deposit_call_back(message: aio_pika.abc.AbstractIncomingMessage, session: CustomAsyncSession):
+    async def on_deposit_call_back(message: aio_pika.abc.AbstractIncomingMessage, session: CustomAsyncSession, bot: Bot):
             import json
-            json_data =  json.loads(message.body())
+            json_data =  json.loads(message.body)
 
             data = dict(json_data)
 
             customer_code  = data["customer_code"]
             amount = data["amount"]
 
-            
+            print(customer_code,  amount)
 
+            # Get the user by the customer code
+            query = await session.exec(select(User).where(User.customer_code == customer_code))
+
+            user = query.first()
+
+            user.balance = user.balance + Decimal(str(amount))
+
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+
+            await bot.send_message(
+                user.chat_id, 
+                f"We've received your deposit of ₦{amount} ❤️🤗!\n"
+                f"Your balance is now ₦{user.balance}"
+            )
 
 
     rabbitmq_client = AsyncRabbitMQClient(settings.RABBITMQ_URL)
@@ -456,7 +484,7 @@ async def rabbitmq_listener(session):
    
     # Subscribe to the queue
     await rabbitmq_client.subscribe([
-        QueueWrapper(q=queue, callback=on_deposit_call_back, callback_kwargs={"session": session})
+        QueueWrapper(q=queue, callback=on_deposit_call_back, callback_kwargs={"session": session, "bot": bot})
     ])
     
     return rabbitmq_client

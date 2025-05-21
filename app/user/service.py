@@ -2,7 +2,7 @@ from decimal import Decimal
 from uuid import UUID
 from .models import User
 from ..dva.models import DVA
-from sqlmodel import select
+from sqlmodel import select, update
 from ..settings import settings
 from ..database.config import CustomAsyncSession
 from ..paystack.client import PaystackClient
@@ -104,3 +104,17 @@ class UserService:
         balance = query.first()
 
         return balance
+    
+
+    async def decrement_balance(self, user_id:  UUID,  amount: float):
+        query = await self.session.exec(select(User).where(User.id == user_id))
+
+        user = query.first()
+
+        user.balance = user.balance - Decimal(str(amount))
+
+        self.session.add(user)
+        await self.session.commit()
+        await self.session.refresh(user)
+
+        return user
