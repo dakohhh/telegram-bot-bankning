@@ -7,9 +7,14 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import create_async_engine
 
+async_database_uri = settings.DATABASE_URL
+if async_database_uri.startswith("postgres://"):
+    async_database_uri = async_database_uri.replace("postgres://", "postgresql://", 1)
+
 # Convert the PostgreSQL URI to an async URI
 # Replace postgresql:// with postgresql+asyncpg://
-async_database_uri = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+if not "postgresql+asyncpg://" in async_database_uri:
+    async_database_uri = async_database_uri.replace("postgresql://", "postgresql+asyncpg://")
 
 engine = create_async_engine(async_database_uri)
 
