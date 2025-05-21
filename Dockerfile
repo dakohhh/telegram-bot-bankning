@@ -43,7 +43,8 @@ FROM python:3.12-slim
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHON_ENV=production
+    PYTHON_ENV=production \
+    PATH="/usr/local/bin:$PATH"
 
 # Install runtime system dependencies
 RUN apt-get update \
@@ -62,11 +63,14 @@ WORKDIR /app
 # Copy dependencies from builder
 COPY --from=builder /app/requirements.txt .
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY --chown=appuser:appuser ./app ./app
 COPY --chown=appuser:appuser ./main.py ./main.py
 COPY --chown=appuser:appuser ./entrypoint.sh ./entrypoint.sh
+COPY --chown=appuser:appuser ./alembic.ini ./alembic.ini
+COPY --chown=appuser:appuser ./migrations ./migrations
 # Switch to non-root user
 USER appuser
 

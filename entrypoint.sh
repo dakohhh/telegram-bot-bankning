@@ -4,10 +4,6 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
-# Activate virtual environment if it exists
-if [ -d "venv" ]; then
-    source venv/bin/activate
-fi
 
 # Function to check if Postgres is ready
 postgres_ready() {
