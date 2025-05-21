@@ -31,6 +31,8 @@ from .dva.models import DVA  # noqa: F401
 from .paystack.client import PaystackClient
 from .paystack.error import PaystackException
 
+from aiohttp import ClientSession, ClientTimeout
+
 from .common.utils.helpers import load_file_to_memory, ogg_to_wav_bytes
 
 from .clover.models.inputs import TransferMoneyInput
@@ -47,7 +49,11 @@ load_dotenv()
 # Get the bot token from environment variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-bot = Bot(token=TOKEN)
+timeout = ClientTimeout(total=1200)
+
+session = ClientSession(timeout=timeout)
+
+bot = Bot(token=TOKEN, session=session)
 
 dp = Dispatcher()
 
