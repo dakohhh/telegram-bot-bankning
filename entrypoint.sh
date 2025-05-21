@@ -4,9 +4,14 @@ set -o errexit
 set -o pipefail
 set -o nounset
 
+# Activate virtual environment if it exists
+if [ -d "venv" ]; then
+    source venv/bin/activate
+fi
+
 # Function to check if Postgres is ready
 postgres_ready() {
-    poetry run python << END
+    python << END
 import sys
 import psycopg2
 from urllib.parse import urlparse
@@ -33,7 +38,7 @@ done
 echo >&2 "PostgreSQL is available"
 
 # Run the migrations
-poetry run alembic upgrade head
+alembic upgrade head
 
 # Run the bot
-exec poetry run python main.py
+exec python main.py
