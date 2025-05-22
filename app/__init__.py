@@ -51,9 +51,8 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 timeout = ClientTimeout(total=1200)
 
-session = ClientSession(timeout=timeout)
-
-bot = Bot(token=TOKEN, session=session)
+# Create bot without session initially
+bot = Bot(token=TOKEN)
 
 dp = Dispatcher()
 
@@ -500,14 +499,19 @@ async def run_bot():
     try:
         # Create a task for the message listener
         async for session in get_session():
-            rabbitmq_client = await rabbitmq_listener(session)
-            
-            # Start the bot
-            await dp.start_polling(bot)
-            
-            # Keep the connection running until the program is terminated
-            while True:
-                await asyncio.sleep(1)
+            # Create the ClientSession here within the async context
+            async with ClientSession(timeout=timeout) as http_session:
+                # Update bot with the session
+                bot.session = http_session
+                
+                rabbitmq_client = await rabbitmq_listener(session)
+                
+                # Start the bot
+                await dp.start_polling(bot)
+                
+                # Keep the connection running until the program is terminated
+                while True:
+                    await asyncio.sleep(1)
     except asyncio.CancelledError:
         print("Shutting down...")
     finally:
