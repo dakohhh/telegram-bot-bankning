@@ -246,14 +246,11 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         )
         return
 
-    # Get or create conversation within the same session
-    conversation = data.get("current_conversation")
+    conversation: Optional[Conversation] = data.get("current_conversation")
+
     if not conversation:
         conversation = await conversation_service.create_conversation(user_id=user.id)
-        await state.update_data(current_conversation=conversation)
-    else:
-        # Refresh the conversation to ensure it's attached to the current session
-        conversation = await conversation_service.get_conversation_with_messages(conversation_id=conversation.id)
+        
         await state.update_data(current_conversation=conversation)
 
     final_text = ""
@@ -289,20 +286,10 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
 
         final_text = transcription.text
 
-    try:
-        # Add messages to conversation within the same session
-        await conversation_service.add_messages_to_conversation(
-            content=f"UserID: {str(user.id)}", 
-            role=MessageRole.USER, 
-            conversation_id=conversation.id
-        )
-        await conversation_service.add_messages_to_conversation(
-            content=final_text, 
-            role=MessageRole.USER, 
-            conversation_id=conversation.id
-        )
 
-        # Get fresh conversation with messages
+        await conversation_service.add_messages_to_conversation(content=f"UserID: {str(user.id)}", role=MessageRole.USER, conversation_id=conversation.id)
+        await conversation_service.add_messages_to_conversation(content=final_text, role=MessageRole.USER, conversation_id=conversation.id)
+
         conversation = await conversation_service.get_conversation_with_messages(conversation_id=conversation.id)
 
         from agents import Agent, Runner, function_tool
@@ -461,11 +448,6 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
             )
 
         await message.answer(result.final_output)
-
-    except Exception as e:
-        print(f"Error processing message: {str(e)}")
-        await message.answer("Sorry, I encountered an error while processing your message. Please try again.")
-        raise e
 
 async def rabbitmq_listener(session):
     async def on_deposit_call_back(message: aio_pika.abc.AbstractIncomingMessage, session: CustomAsyncSession, bot: Bot):
