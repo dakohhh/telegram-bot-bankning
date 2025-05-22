@@ -478,6 +478,7 @@ async def rabbitmq_listener(session):
                 print(e)
                 print(e)
                 print(e)
+                raise e
 
 
     rabbitmq_client = AsyncRabbitMQClient(settings.RABBITMQ_URL)
