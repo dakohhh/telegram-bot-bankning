@@ -455,22 +455,29 @@ async def rabbitmq_listener(session):
 
             print(customer_code,  amount)
 
-            # Get the user by the customer code
-            query = await session.exec(select(User).where(User.customer_code == customer_code))
+            try:
+                # Get the user by the customer code
+                query = await session.exec(select(User).where(User.customer_code == customer_code))
 
-            user = query.first()
+                user = query.first()
 
-            user.balance = user.balance + Decimal(str(amount))
+                user.balance = user.balance + Decimal(str(amount))
 
-            session.add(user)
-            await session.commit()
-            await session.refresh(user)
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
 
-            await bot.send_message(
-                user.chat_id, 
-                f"We've received your deposit of ₦{amount} ❤️🤗!\n"
-                f"Your balance is now ₦{user.balance}"
-            )
+                await bot.send_message(
+                    user.chat_id, 
+                    f"We've received your deposit of ₦{amount} ❤️🤗!\n"
+                    f"Your balance is now ₦{user.balance}"
+                )
+            except Exception as e:
+                session.rollback()
+                print(e)
+                print(e)
+                print(e)
+                print(e)
 
 
     rabbitmq_client = AsyncRabbitMQClient(settings.RABBITMQ_URL)
