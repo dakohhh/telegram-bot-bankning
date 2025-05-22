@@ -52,6 +52,7 @@ RUN apt-get update \
     libgomp1 \
     curl \
     wget \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Create and switch to non-root user
