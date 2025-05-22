@@ -13,6 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command
 from aiogram.types import Message
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from app.settings  import settings
 
@@ -31,7 +32,6 @@ from .dva.models import DVA  # noqa: F401
 from .paystack.client import PaystackClient
 from .paystack.error import PaystackException
 
-from aiohttp import ClientSession, ClientTimeout
 
 from .common.utils.helpers import load_file_to_memory, ogg_to_wav_bytes
 
@@ -49,9 +49,8 @@ load_dotenv()
 # Get the bot token from environment variables
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-timeout = ClientTimeout(total=1200)
 
-# Create bot without session initially
+# Create bot with proper session
 bot = Bot(token=TOKEN)
 
 dp = Dispatcher()
@@ -499,19 +498,18 @@ async def run_bot():
     try:
         # Create a task for the message listener
         async for session in get_session():
-            # Create the ClientSession here within the async context
-            async with ClientSession(timeout=timeout) as http_session:
-                # Update bot with the session
-                bot.session = http_session
-                
-                rabbitmq_client = await rabbitmq_listener(session)
-                
-                # Start the bot
-                await dp.start_polling(bot)
-                
-                # Keep the connection running until the program is terminated
-                while True:
-                    await asyncio.sleep(1)
+            # Create the proper aiogram session
+            aiogram_session = AiohttpSession(timeout=3600)
+            bot.session = aiogram_session
+            
+            rabbitmq_client = await rabbitmq_listener(session)
+            
+            # Start the bot
+            await dp.start_polling(bot)
+            
+            # Keep the connection running until the program is terminated
+            while True:
+                await asyncio.sleep(1)
     except asyncio.CancelledError:
         print("Shutting down...")
     finally:
@@ -519,6 +517,9 @@ async def run_bot():
         if 'rabbitmq_client' in locals():
             if rabbitmq_client.connection:
                 await rabbitmq_client.connection.close()
+        # Close the aiogram session
+        if hasattr(bot, 'session'):
+            await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(run_bot())
