@@ -76,6 +76,13 @@ class UserService:
 
         return user
     
+    async def get_user_by_email(self, email: str) -> User | None:
+        query = await self.session.exec(select(User).where(User.email == email))
+
+        user = query.first()
+
+        return user
+    
 
     async def get_user_dva(self, user_id: UUID) -> DVA | None:
 

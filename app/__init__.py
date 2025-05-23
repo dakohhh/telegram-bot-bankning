@@ -142,12 +142,18 @@ async def phone_contact_handler(message: Message, state: FSMContext) -> None:
 
 
 @dp.message(CreateUserForm.waiting_for_email)
-async def email_handler(message: Message, state: FSMContext) -> None:
+async def email_handler(message: Message, state: FSMContext, user_service: UserService) -> None:
     # Validate email
     email = None
     try:
         email_info = validate_email(message.text)
         email = email_info.normalized
+
+        existing_user = await user_service.get_user_by_email(email)
+        if existing_user:
+            await message.answer("Oops..🥲 the email you sent already exists, please provide a valid one")
+            return
+
     except EmailNotValidError:
         await message.answer("Oops..🥲 the email you sent isn't a valid one, please provide a valid one")
         return
