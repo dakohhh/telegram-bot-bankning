@@ -455,8 +455,6 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
             conversation_id=conversation.id
         )
 
-    
-
     await message.answer(result.final_output)
 
 async def rabbitmq_listener(session):
@@ -518,109 +516,46 @@ async def rabbitmq_listener(session):
     return rabbitmq_client
 
 
-
-
-# # Update your run_bot function
-# async def run_bot():
-#     try:
-#         # Check initial database connection
-#         if not await check_database_health():
-#             raise Exception("Initial database connection failed")
-        
-#         # Create a task for connection maintenance
-#         maintenance_task = asyncio.create_task(maintain_database_connections())
-        
-#         # Create a task for the message listener
-#         async for session in get_session():
-#             # Create the proper aiogram session
-#             aiogram_session = AiohttpSession(timeout=3600)
-#             bot.session = aiogram_session
-            
-#             rabbitmq_client = await rabbitmq_listener(session)
-            
-#             # Create polling task
-#             polling_task = asyncio.create_task(dp.start_polling(bot))
-            
-#             # Wait for either task to complete/fail
-#             done, pending = await asyncio.wait(
-#                 [polling_task, maintenance_task],
-#                 return_when=asyncio.FIRST_COMPLETED
-#             )
-            
-#             # Cancel pending tasks
-#             for task in pending:
-#                 task.cancel()
-#                 try:
-#                     await task
-#                 except asyncio.CancelledError:
-#                     pass
-            
-#             # Check if any task failed
-#             for task in done:
-#                 if task.exception():
-#                     raise task.exception()
-            
-#             break  # Exit the session loop
-            
-#     except asyncio.CancelledError:
-#         print("Shutting down...")
-#     except Exception as e:
-#         print(f"Bot error: {e}")
-#         # Restart after a delay
-#         await asyncio.sleep(5)
-#         return await run_bot()  # Recursive restart
-#     finally:
-#         # Clean up resources
-#         if 'rabbitmq_client' in locals():
-#             if rabbitmq_client.connection:
-#                 await rabbitmq_client.connection.close()
-#         # Close the aiogram session
-#         if hasattr(bot, 'session'):
-#             await bot.session.close()
-
-# # Alternative robust main function with auto-restart
-# async def run_bot_with_restart():
-#     """Run bot with automatic restart on failure"""
-#     while True:
-#         try:
-#             await run_bot()
-#         except Exception as e:
-#             print(f"Bot crashed: {e}")
-#             print("Restarting in 10 seconds...")
-#             await asyncio.sleep(10)
-
-# # Update your __main__ section
-# if __name__ == "__main__":
-#     # Use the restart-enabled version for production
-#     asyncio.run(run_bot_with_restart())
-
-
-
+async def heartbeat(bot: Bot, interval: int = 10):
+    while True:
+        try:
+            await bot.get_me()
+            print("Heartbeat successful")
+        except Exception as e:
+            print(f"Heartbeat failed: {e}")
+        await asyncio.sleep(interval)
 
 
 async def run_bot():
+    rabbitmq_client = None
     try:
-        # Create a task for the message listener
-        async for session in get_session():
-            # Create the proper aiogram session
-            aiogram_session = AiohttpSession(timeout=3600)
-            bot.session = aiogram_session
-            
-            rabbitmq_client = await rabbitmq_listener(session)
-            
-            # Start the bot
-            await dp.start_polling(bot)
-            
-            # Keep the connection running until the program is terminated
-            while True:
-                await asyncio.sleep(1)
-    except asyncio.CancelledError:
-        print("Shutting down...")
+        while True:
+            try:
+                # Create a task for the message listener
+                async for session in get_session():
+                    # Create the proper aiogram session
+                    aiogram_session = AiohttpSession(timeout=60)
+                    bot.session = aiogram_session
+                    
+                    rabbitmq_client = await rabbitmq_listener(session)
+
+                    # Start the heartbeat task
+                    asyncio.create_task(heartbeat(bot))
+                    
+                    # Start the bot
+                    await dp.start_polling(bot)
+                    
+                    # Keep the connection running until the program is terminated
+                    while True:
+                        await asyncio.sleep(1)
+            except Exception as e:
+                print(e)
+                # Wait for 5 seconds before retrying
+                await asyncio.sleep(5)
     finally:
         # Clean up resources
-        if 'rabbitmq_client' in locals():
-            if rabbitmq_client.connection:
-                await rabbitmq_client.connection.close()
+        if rabbitmq_client and rabbitmq_client.connection:
+            await rabbitmq_client.connection.close()
         # Close the aiogram session
         if hasattr(bot, 'session'):
             await bot.session.close()
