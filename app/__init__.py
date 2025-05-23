@@ -43,6 +43,9 @@ from .user.states import CreateUserForm
 from .database.config import CustomAsyncSession
 from .common.middleware import CustomAiogramMiddleware
 
+from .database.config import maintain_database_connections, check_database_health
+
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -286,168 +289,169 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
 
         final_text = transcription.text
 
+    await conversation_service.add_messages_to_conversation(content=f"UserID: {str(user.id)}", role=MessageRole.USER, conversation_id=conversation.id)
+    await conversation_service.add_messages_to_conversation(content=final_text, role=MessageRole.USER, conversation_id=conversation.id)
 
-        await conversation_service.add_messages_to_conversation(content=f"UserID: {str(user.id)}", role=MessageRole.USER, conversation_id=conversation.id)
-        await conversation_service.add_messages_to_conversation(content=final_text, role=MessageRole.USER, conversation_id=conversation.id)
+    conversation = await conversation_service.get_conversation_with_messages(conversation_id=conversation.id)
 
-        conversation = await conversation_service.get_conversation_with_messages(conversation_id=conversation.id)
+    from agents import Agent, Runner, function_tool
 
-        from agents import Agent, Runner, function_tool
-
-        @function_tool
-        async def check_user_balance(user_id: str) -> str:
-            """Checks the user's account balance and returns it."""
-            
-            print(f"[Tool Call]: Checking account balance for user: {user_id}")
-            print(f"[Tool Call]: Checking account balance for user: {user_id}")
-            print(f"[Tool Call]: Checking account balance for user: {user_id}")
-            print(f"[Tool Call]: Checking account balance for user: {user_id}")
-
-            # Assuming `user_service.get_user_balance` is an async function, you need to await it
-            balance = await user_service.get_user_balance(UUID(user_id))
-
-            # Return the balance
-            return f"You account balance is: {balance}"
+    @function_tool
+    async def check_user_balance(user_id: str) -> str:
+        """Checks the user's account balance and returns it."""
         
-        @function_tool
-        async def check_user_balance_is_sufficient(user_id: str, amount: float) -> str:
-            """Checks if the user's account balance is sufficient for the transaction."""
-            print(f"[Tool Call]: Checking if account balance is sufficient for user: {user_id}")
-            print(f"[Tool Call]: Checking if account balance is sufficient for user: {user_id}")
-            print(f"[Tool Call]: Checking if account balance is sufficient for user: {user_id}")
-            balance = await user_service.get_user_balance(UUID(user_id))
-            if balance >= amount:
-                return "Balance is sufficient to make the transfer."
-            else:
-                return f"Insufficient balance. Your current balance is {balance}₦."
-            
+        print(f"[Tool Call]: Checking account balance for user: {user_id}")
+        print(f"[Tool Call]: Checking account balance for user: {user_id}")
+        print(f"[Tool Call]: Checking account balance for user: {user_id}")
+        print(f"[Tool Call]: Checking account balance for user: {user_id}")
 
-        @function_tool
-        async def verify_bank_name(bank_name: str) -> str:
-            """Checks if the bank is a valid bank returns a bank code to initiate the transfer"""
-            paystack_client = PaystackClient()
+        # Assuming `user_service.get_user_balance` is an async function, you need to await it
+        balance = await user_service.get_user_balance(UUID(user_id))
 
-            banks = (await paystack_client.get_banks()).data
-
-            bank_data = ""
-
-            for bank in banks:
-               bank_data = bank_data + f"Bank Name: {bank.name} => Bank Code: {bank.code}\n"
-
-            bank_code_parser = BankCodeParser()
-
-            bank_code = bank_code_parser.parse(bank_name, bank_data).bank_code
-            
-            return bank_code
-            
-
-        @function_tool
-        async def verify_recipient(account_number: str, bank_code: str) -> str:
-            """Verifies and returns the recipient's name based on account number and bank code. The bank_code is a """
-            print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
-            print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
-            print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
-            
-            try:
-                paystack_client = PaystackClient()
-
-                resolve_account = (await paystack_client.resolve_account(account_number=account_number, bank_code=bank_code)).data
-
-            except PaystackException as error:
-                print(error)
-                return "Sorry! Could not resolve the account name, please check the account number and bank name again"
-            
-
-            await conversation_service.add_messages_to_conversation(
-                    content=f"New Bank Code To Transfer: {bank_code}", 
-                    role=MessageRole.ASSISTANT, 
-                    conversation_id=conversation.id
-                )
-                
-            return f"Account Name: {resolve_account.account_name}, Account Number: {resolve_account.account_number}, Bank Code: {bank_code}"
-        
-        @function_tool
-        async def send_money(user_id: str, account_name: str, account_number: str, amount: int, bank_code: str) -> bool:
-            """Transfers money to a bank account."""
-            print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
-            print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
-            print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")        
-
-            paystack_client = PaystackClient()
-
-            transfer_recipient = (await paystack_client.create_transfer_recipient(name=account_name,account_number=account_number, bank_code=bank_code)).data
-
-            transfer = await paystack_client.initiate_transfer(recipient_code=transfer_recipient.recipient_code, amount=(amount * 100), reference=str(uuid4()))
-
-            # Store the transfer object in the database or something
-            print(transfer)
-
-            # Decrement the user's balance
-            await user_service.decrement_balance(UUID(user_id), float(amount))
-
-            return True
-
-
-        agent = Agent(
-            name="Clover AI Assistant",
-            instructions=(
-                "You're Clover, the AI assistant for Cleva Banking. "
-                "You are STRICTLY a banking assistant that can ONLY help with cleva banking services. "
-                
-                "STRICT POLICY: You can ONLY respond to banking related queries. "
-                ""
-                "For ANY non-banking queries (like entertainment, songs, weather, general knowledge, etc.), "
-                "respond with: 'I'm your banking assistant and can only help with banking services. "
-                "I can check your balance, help with transfers, or provide account information. "
-                "How can I help you with your banking needs today?' "
+        # Return the balance
+        return f"You account balance is: {balance}"
     
-                "Never display the User ID to the user or mention its existence."
+    @function_tool
+    async def check_user_balance_is_sufficient(user_id: str, amount: float) -> str:
+        """Checks if the user's account balance is sufficient for the transaction."""
+        print(f"[Tool Call]: Checking if account balance is sufficient for user: {user_id}")
+        print(f"[Tool Call]: Checking if account balance is sufficient for user: {user_id}")
+        print(f"[Tool Call]: Checking if account balance is sufficient for user: {user_id}")
+        balance = await user_service.get_user_balance(UUID(user_id))
+        if balance >= amount:
+            return "Balance is sufficient to make the transfer."
+        else:
+            return f"Insufficient balance. Your current balance is {balance}₦."
+        
 
-                "Use the provided tools whenever possible and do not rely on your own knowledge. "
-                "If the queries provided require no tools, simply give a reply that best suits the query or say you do not have that feature yet. "
-                
-                "For money transfers/send money, follow this exact process: "
-                
-                "1. Make sure the user has supplied the Account Number, Bank Name, and the Amount they want to transfer. "
-                "Ask for any missing information before proceeding. "
-                
-                "2. Verify if balance is sufficient using check_user_balance_is_sufficient. "
-                "If the balance is insufficient, inform the user and stop the process. "
-                
-                "3. IMPORTANT: Convert the bank name to a bank code using the verify_bank_name tool. "
-                "Store this bank code value in your conversation memory. "
-                "Never display the bank code to the user or mention its existence. "
-                
-                "4. Use the verify_recipient tool with the account_number and the bank_code obtained in step 3 (NOT the bank name). "
-                "Show the account holder's name to the user and ask for confirmation. "
-                
-                "5. CRITICAL: Use the EXACT SAME bank_code from step 3 when calling the send_money tool. "
-                "Do NOT recalculate or look up the bank code again. "
-                "For example, if you determined the bank code is '070' in step 3, use '070' in this step as well. "
-                "Call the send_money tool with the account number, amount, and the SAME bank_code used for verification. "
-                
-                "The primary currency is Nigerian Naira (₦). "
-                
-                "STATE MANAGEMENT: You must maintain state throughout the conversation. "
-                "Once you obtain a bank code for a specific bank, you must use the same bank code "
-                "throughout all subsequent steps of that particular transaction. DO NOT recalculate "
-                "or look up the bank code multiple times for the same transaction."
-            ),
-            model="gpt-4o-mini",
-            tools=[check_user_balance, check_user_balance_is_sufficient, verify_bank_name, verify_recipient, send_money]
-        )
+    @function_tool
+    async def verify_bank_name(bank_name: str) -> str:
+        """Checks if the bank is a valid bank returns a bank code to initiate the transfer"""
+        paystack_client = PaystackClient()
 
-        result = await Runner.run(agent, input=conversation.get_messages)
+        banks = (await paystack_client.get_banks()).data
 
-        # Append the result of the agents final output to the conversation
-        if isinstance(result.final_output, str):
-            await conversation_service.add_messages_to_conversation(
-                content=result.final_output, 
+        bank_data = ""
+
+        for bank in banks:
+            bank_data = bank_data + f"Bank Name: {bank.name} => Bank Code: {bank.code}\n"
+
+        bank_code_parser = BankCodeParser()
+
+        bank_code = bank_code_parser.parse(bank_name, bank_data).bank_code
+        
+        return bank_code
+        
+
+    @function_tool
+    async def verify_recipient(account_number: str, bank_code: str) -> str:
+        """Verifies and returns the recipient's name based on account number and bank code. The bank_code is a """
+        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
+        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
+        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
+        
+        try:
+            paystack_client = PaystackClient()
+
+            resolve_account = (await paystack_client.resolve_account(account_number=account_number, bank_code=bank_code)).data
+
+        except PaystackException as error:
+            print(error)
+            return "Sorry! Could not resolve the account name, please check the account number and bank name again"
+        
+
+        await conversation_service.add_messages_to_conversation(
+                content=f"New Bank Code To Transfer: {bank_code}", 
                 role=MessageRole.ASSISTANT, 
                 conversation_id=conversation.id
             )
+            
+        return f"Account Name: {resolve_account.account_name}, Account Number: {resolve_account.account_number}, Bank Code: {bank_code}"
+    
+    @function_tool
+    async def send_money(user_id: str, account_name: str, account_number: str, amount: int, bank_code: str) -> bool:
+        """Transfers money to a bank account."""
+        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
+        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
+        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")        
 
-        await message.answer(result.final_output)
+        paystack_client = PaystackClient()
+
+        transfer_recipient = (await paystack_client.create_transfer_recipient(name=account_name,account_number=account_number, bank_code=bank_code)).data
+
+        transfer = await paystack_client.initiate_transfer(recipient_code=transfer_recipient.recipient_code, amount=(amount * 100), reference=str(uuid4()))
+
+        # Store the transfer object in the database or something
+        print(transfer)
+
+        # Decrement the user's balance
+        await user_service.decrement_balance(UUID(user_id), float(amount))
+
+        return True
+
+
+    agent = Agent(
+        name="Clover AI Assistant",
+        instructions=(
+            "You're Clover, the AI assistant for Cleva Banking. "
+            "You are STRICTLY a banking assistant that can ONLY help with cleva banking services. "
+            
+            "STRICT POLICY: You can ONLY respond to banking related queries. "
+            ""
+            "For ANY non-banking queries (like entertainment, songs, weather, general knowledge, etc.), "
+            "respond with: 'I'm your banking assistant and can only help with banking services. "
+            "I can check your balance, help with transfers, or provide account information. "
+            "How can I help you with your banking needs today?' "
+
+            "Never display the User ID to the user or mention its existence."
+
+            "Use the provided tools whenever possible and do not rely on your own knowledge. "
+            "If the queries provided require no tools, simply give a reply that best suits the query or say you do not have that feature yet. "
+            
+            "For money transfers/send money, follow this exact process: "
+            
+            "1. Make sure the user has supplied the Account Number, Bank Name, and the Amount they want to transfer. "
+            "Ask for any missing information before proceeding. "
+            
+            "2. Verify if balance is sufficient using check_user_balance_is_sufficient. "
+            "If the balance is insufficient, inform the user and stop the process. "
+            
+            "3. IMPORTANT: Convert the bank name to a bank code using the verify_bank_name tool. "
+            "Store this bank code value in your conversation memory. "
+            "Never display the bank code to the user or mention its existence. "
+            
+            "4. Use the verify_recipient tool with the account_number and the bank_code obtained in step 3 (NOT the bank name). "
+            "Show the account holder's name to the user and ask for confirmation. "
+            
+            "5. CRITICAL: Use the EXACT SAME bank_code from step 3 when calling the send_money tool. "
+            "Do NOT recalculate or look up the bank code again. "
+            "For example, if you determined the bank code is '070' in step 3, use '070' in this step as well. "
+            "Call the send_money tool with the account number, amount, and the SAME bank_code used for verification. "
+            
+            "The primary currency is Nigerian Naira (₦). "
+            
+            "STATE MANAGEMENT: You must maintain state throughout the conversation. "
+            "Once you obtain a bank code for a specific bank, you must use the same bank code "
+            "throughout all subsequent steps of that particular transaction. DO NOT recalculate "
+            "or look up the bank code multiple times for the same transaction."
+        ),
+        model="gpt-4o-mini",
+        tools=[check_user_balance, check_user_balance_is_sufficient, verify_bank_name, verify_recipient, send_money]
+    )
+
+    result = await Runner.run(agent, input=conversation.get_messages)
+
+    # Append the result of the agents final output to the conversation
+    if isinstance(result.final_output, str):
+        await conversation_service.add_messages_to_conversation(
+            content=result.final_output, 
+            role=MessageRole.ASSISTANT, 
+            conversation_id=conversation.id
+        )
+
+    
+
+    await message.answer(result.final_output)
 
 async def rabbitmq_listener(session):
     async def on_deposit_call_back(message: aio_pika.abc.AbstractIncomingMessage, session: CustomAsyncSession, bot: Bot):
@@ -506,6 +510,86 @@ async def rabbitmq_listener(session):
     ])
     
     return rabbitmq_client
+
+
+
+
+# # Update your run_bot function
+# async def run_bot():
+#     try:
+#         # Check initial database connection
+#         if not await check_database_health():
+#             raise Exception("Initial database connection failed")
+        
+#         # Create a task for connection maintenance
+#         maintenance_task = asyncio.create_task(maintain_database_connections())
+        
+#         # Create a task for the message listener
+#         async for session in get_session():
+#             # Create the proper aiogram session
+#             aiogram_session = AiohttpSession(timeout=3600)
+#             bot.session = aiogram_session
+            
+#             rabbitmq_client = await rabbitmq_listener(session)
+            
+#             # Create polling task
+#             polling_task = asyncio.create_task(dp.start_polling(bot))
+            
+#             # Wait for either task to complete/fail
+#             done, pending = await asyncio.wait(
+#                 [polling_task, maintenance_task],
+#                 return_when=asyncio.FIRST_COMPLETED
+#             )
+            
+#             # Cancel pending tasks
+#             for task in pending:
+#                 task.cancel()
+#                 try:
+#                     await task
+#                 except asyncio.CancelledError:
+#                     pass
+            
+#             # Check if any task failed
+#             for task in done:
+#                 if task.exception():
+#                     raise task.exception()
+            
+#             break  # Exit the session loop
+            
+#     except asyncio.CancelledError:
+#         print("Shutting down...")
+#     except Exception as e:
+#         print(f"Bot error: {e}")
+#         # Restart after a delay
+#         await asyncio.sleep(5)
+#         return await run_bot()  # Recursive restart
+#     finally:
+#         # Clean up resources
+#         if 'rabbitmq_client' in locals():
+#             if rabbitmq_client.connection:
+#                 await rabbitmq_client.connection.close()
+#         # Close the aiogram session
+#         if hasattr(bot, 'session'):
+#             await bot.session.close()
+
+# # Alternative robust main function with auto-restart
+# async def run_bot_with_restart():
+#     """Run bot with automatic restart on failure"""
+#     while True:
+#         try:
+#             await run_bot()
+#         except Exception as e:
+#             print(f"Bot crashed: {e}")
+#             print("Restarting in 10 seconds...")
+#             await asyncio.sleep(10)
+
+# # Update your __main__ section
+# if __name__ == "__main__":
+#     # Use the restart-enabled version for production
+#     asyncio.run(run_bot_with_restart())
+
+
+
 
 
 async def run_bot():
