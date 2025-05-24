@@ -10,8 +10,8 @@ if TYPE_CHECKING:
     from ..conversation.models import Conversation
 
 class User(BaseModel, table=True):
-    first_name: str
-    last_name: str
+    first_name: Optional[str] = Field(nullable=True)
+    last_name: Optional[str] = Field(nullable=True)
     email: str = Field(unique=True)
     phone_number: str
     telegram_id: int = Field(sa_column=Column(BigInteger()))
