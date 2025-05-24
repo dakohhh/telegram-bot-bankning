@@ -71,6 +71,9 @@ async def command_start_handler(message: Message, state: FSMContext, user_servic
             "2. 📥 Deposit funds — type `/deposit`\n"
             "3. For transfers, just interact with the agent 😉."
         )
+
+        await state.clear()
+
         conversation = await conversation_service.create_conversation(user_id=user.id)
 
         await state.update_data(current_conversation=conversation)
@@ -103,7 +106,7 @@ async def command_deposit_handler(message: Message, state: FSMContext, user_serv
         )
 
 @dp.message(Command("register"))
-async def command_register_handler(message: Message, session: CustomAsyncSession) -> None:
+async def command_register_handler(message: Message, state: FSMContext, session: CustomAsyncSession) -> None:
     user_service = UserService(session=session)
     existing_user = await user_service.get_user_by_telegram_id(telegram_id=message.from_user.id)
 
@@ -113,6 +116,8 @@ async def command_register_handler(message: Message, session: CustomAsyncSession
         )
         await command_help_handler(message)
     else:
+
+        await state.clear()
 
         # Start the FSM to collect email and phone number 
         keyboard = ReplyKeyboardMarkup(
@@ -180,8 +185,8 @@ async def proceed_registration(message: Message, state: FSMContext, user_service
     confirm_text = message.text.lower()
 
     if confirm_text == "no":
-       await message.answer("Registration is cancelled ❌, type /register to start over")
-       return
+        await message.answer("Registration is cancelled ❌, type /register to start over")
+        await state.clear()
     
     elif confirm_text == "yes":
         data = await state.get_data()
@@ -195,9 +200,14 @@ async def proceed_registration(message: Message, state: FSMContext, user_service
             chat_id=str(message.chat.id)
         )
 
+        name = f"Welcome {new_user.first_name}"
+
+        if new_user.last_name:
+            name += f" {new_user.last_name}"
+
         await message.answer(
             "Account Created Successfully ❤️\n"
-            f"Welcome {new_user.first_name} {new_user.last_name}! 🤗\n"
+            f"Welcome {name}! 🤗\n"
             f"Your balance 💵 is:  {new_user.balance}\n\n"
 
             f"Your account information:"
@@ -212,11 +222,12 @@ async def proceed_registration(message: Message, state: FSMContext, user_service
             "3. For transfers, just interact with the agent 😉."
         )
 
+        await state.clear()
+
 
 
 @dp.message(Command("balance"))
-async def command_balance_handler(message: Message, session: CustomAsyncSession) -> None:
-    user_service = UserService(session=session)
+async def command_balance_handler(message: Message, user_service: UserService) -> None:
     user = await user_service.get_user_by_telegram_id(telegram_id=message.from_user.id)
     if not user:
          await message.answer(
