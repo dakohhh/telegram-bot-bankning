@@ -173,13 +173,7 @@ class PaystackClient:
         """
         Create a Customer for a Paystack customer.
         """
-        payload = { "email": email }
-
-        if first_name:
-            payload["first_name"] = first_name
-
-        if last_name:
-            payload["last_name"] = last_name
+        payload = { "email": email, "first_name": first_name if first_name else "User", "last_name": last_name if last_name else "User" }
 
         if phone:
             payload["phone"] = phone
