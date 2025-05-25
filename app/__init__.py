@@ -15,6 +15,8 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from aiogram.client.session.aiohttp import AiohttpSession
 
+from agents import Agent, Runner, function_tool
+
 from app.settings  import settings
 
 from app.conversation.models import Conversation, MessageRole
@@ -61,7 +63,7 @@ dp = Dispatcher()
 dp.message.middleware(CustomAiogramMiddleware())
 
 @dp.message(Command("start"))
-async def command_start_handler(message: Message, state: FSMContext, user_service: UserService, conversation_service: ConversationService) -> None:
+async def command_start_handler(message: Message, state: FSMContext, user_service: UserService) -> None:
     print(message.chat.id)
     user = await user_service.get_user_by_telegram_id(telegram_id=message.from_user.id)
     if user:
@@ -73,11 +75,6 @@ async def command_start_handler(message: Message, state: FSMContext, user_servic
         )
 
         await state.clear()
-
-        conversation = await conversation_service.create_conversation(user_id=user.id)
-
-        await state.update_data(current_conversation=conversation)
-
     else:
         await message.answer(
             "Welcome to Cleva Banking 👋\n"
@@ -88,7 +85,7 @@ async def command_start_handler(message: Message, state: FSMContext, user_servic
 
 
 @dp.message(Command("deposit"))
-async def command_deposit_handler(message: Message, state: FSMContext, user_service: UserService, conversation_service: ConversationService) -> None:
+async def command_deposit_handler(message: Message, state: FSMContext, user_service: UserService) -> None:
     user = await user_service.get_user_by_telegram_id(telegram_id=message.from_user.id)
     if user:
         dva = await user_service.get_user_dva(user.id)
@@ -253,9 +250,6 @@ async def command_help_handler(message: Message) -> None:
 
 @dp.message()
 async def handle_any_message(message: Message, state: FSMContext, user_service: UserService, conversation_service: ConversationService):
-    print(message.text)
-
-    data = await state.get_data()
 
     user = await user_service.get_user_by_telegram_id(telegram_id=message.from_user.id)
 
@@ -265,6 +259,9 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
             "To open your cleva account — type `/register`"
         )
         return
+    
+
+    data = await state.get_data()
 
     conversation: Optional[Conversation] = data.get("current_conversation")
 
@@ -272,6 +269,8 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         conversation = await conversation_service.create_conversation(user_id=user.id)
         
         await state.update_data(current_conversation=conversation)
+
+    print(conversation.id)
 
     final_text = ""
 
@@ -306,12 +305,14 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
 
         final_text = transcription.text
 
+
+    print(final_text)
+
     await conversation_service.add_messages_to_conversation(content=f"UserID: {str(user.id)}", role=MessageRole.USER, conversation_id=conversation.id)
     await conversation_service.add_messages_to_conversation(content=final_text, role=MessageRole.USER, conversation_id=conversation.id)
 
     conversation = await conversation_service.get_conversation_with_messages(conversation_id=conversation.id)
 
-    from agents import Agent, Runner, function_tool
 
     @function_tool
     async def check_user_balance(user_id: str) -> str:
