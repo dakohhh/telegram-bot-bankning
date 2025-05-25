@@ -260,14 +260,11 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
         )
         return
     
-
     data = await state.get_data()
-
     conversation: Optional[Conversation] = data.get("current_conversation")
 
     if not conversation:
         conversation = await conversation_service.create_conversation(user_id=user.id)
-        
         await state.update_data(current_conversation=conversation)
 
     print(conversation.id)
@@ -276,23 +273,18 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
 
     if message.text:
         final_text = message.text
-
     elif message.photo:
         photo = await load_file_to_memory(bot, message.photo[-1])
-
         parser = PhotoTransferMoneyParser()
-
         transfer_money_input = await parser.parse(photo)
 
         if transfer_money_input.account_number:
             final_text = final_text + f"Account number: {transfer_money_input.account_number}, "
-
         if transfer_money_input.bank_name:
             final_text = final_text + f"Bank Name: {transfer_money_input.bank_name}"
 
     if message.voice:
         voice = await load_file_to_memory(bot, message.voice)
-
         voice_wav_io = ogg_to_wav_bytes(voice)
 
         from openai import OpenAI
@@ -302,82 +294,60 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
             model="gpt-4o-transcribe", 
             file=voice_wav_io,
         )
-
         final_text = transcription.text
-
 
     print(final_text)
 
-    await conversation_service.add_messages_to_conversation(content=f"UserID: {str(user.id)}", role=MessageRole.USER, conversation_id=conversation.id)
+    # Add user message to conversation
     await conversation_service.add_messages_to_conversation(content=final_text, role=MessageRole.USER, conversation_id=conversation.id)
 
     conversation = await conversation_service.get_conversation_with_messages(conversation_id=conversation.id)
-
 
     @function_tool
     async def check_user_balance(user_id: str) -> str:
         """Checks the user's account balance and returns it."""
         
         print(f"[Tool Call]: Checking account balance for user: {user_id}")
-        print(f"[Tool Call]: Checking account balance for user: {user_id}")
-        print(f"[Tool Call]: Checking account balance for user: {user_id}")
-        print(f"[Tool Call]: Checking account balance for user: {user_id}")
-
-        # Assuming `user_service.get_user_balance` is an async function, you need to await it
         balance = await user_service.get_user_balance(UUID(user_id))
-
-        # Return the balance
-        return f"You account balance is: {balance}"
+        return f"Your account balance is: ₦{balance}"
     
     @function_tool
     async def check_user_balance_is_sufficient(user_id: str, amount: float) -> str:
         """Checks if the user's account balance is sufficient for the transaction."""
         print(f"[Tool Call]: Checking if account balance is sufficient for user: {user_id}")
-        print(f"[Tool Call]: Checking if account balance is sufficient for user: {user_id}")
-        print(f"[Tool Call]: Checking if account balance is sufficient for user: {user_id}")
         balance = await user_service.get_user_balance(UUID(user_id))
         if balance >= amount:
             return "Balance is sufficient to make the transfer."
         else:
-            return f"Insufficient balance. Your current balance is {balance}₦."
+            return f"Insufficient balance. Your current balance is ₦{balance}."
         
-
     @function_tool
     async def verify_bank_name(bank_name: str) -> str:
         """Checks if the bank is a valid bank returns a bank code to initiate the transfer"""
         paystack_client = PaystackClient()
-
         banks = (await paystack_client.get_banks()).data
 
         bank_data = ""
-
         for bank in banks:
             bank_data = bank_data + f"Bank Name: {bank.name} => Bank Code: {bank.code}\n"
 
         bank_code_parser = BankCodeParser()
-
         bank_code = bank_code_parser.parse(bank_name, bank_data).bank_code
         
         return bank_code
         
-
     @function_tool
     async def verify_recipient(account_number: str, bank_code: str) -> str:
-        """Verifies and returns the recipient's name based on account number and bank code. The bank_code is a """
-        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
-        print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
+        """Verifies and returns the recipient's name based on account number and bank code."""
         print(f"[Tool Call]: Verifying recipient with account {account_number} at {bank_code}")
         
         try:
             paystack_client = PaystackClient()
-
             resolve_account = (await paystack_client.resolve_account(account_number=account_number, bank_code=bank_code)).data
-
         except PaystackException as error:
             print(error)
             return "Sorry! Could not resolve the account name, please check the account number and bank name again"
         
-
         await conversation_service.add_messages_to_conversation(
                 content=f"New Bank Code To Transfer: {bank_code}", 
                 role=MessageRole.ASSISTANT, 
@@ -389,43 +359,39 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
     @function_tool
     async def send_money(user_id: str, account_name: str, account_number: str, amount: int, bank_code: str) -> bool:
         """Transfers money to a bank account."""
-        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
-        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")
-        print(f"[Tool Call]: Sending {amount}₦ to account {account_number} at {bank_code} with account name {account_name}")        
+        print(f"[Tool Call]: Sending ₦{amount} to account {account_number} at {bank_code} with account name {account_name}")
 
         paystack_client = PaystackClient()
-
         transfer_recipient = (await paystack_client.create_transfer_recipient(name=account_name,account_number=account_number, bank_code=bank_code)).data
-
         transfer = await paystack_client.initiate_transfer(recipient_code=transfer_recipient.recipient_code, amount=(amount * 100), reference=str(uuid4()))
 
-        # Store the transfer object in the database or something
         print(transfer)
-
-        # Decrement the user's balance
         await user_service.decrement_balance(UUID(user_id), float(amount))
-
         return True
-
 
     agent = Agent(
         name="Clover AI Assistant",
         instructions=(
-            "You're Clover, the AI assistant for Cleva Banking. "
-            "You are STRICTLY a banking assistant that can ONLY help with cleva banking services. "
+            f"You're Clover, the AI assistant for Cleva Banking. "
+            f"The current user's ID is: {str(user.id)} "
             
-            "STRICT POLICY: You can ONLY respond to banking related queries. "
-            ""
-            "For ANY non-banking queries (like entertainment, songs, weather, general knowledge, etc.), "
-            "respond with: 'I'm your banking assistant and can only help with banking services. "
+            "You are a helpful banking assistant that can help with cleva banking services. "
+            "You can check balances, help with transfers, and provide account information. "
+            
+            "IMPORTANT: For banking requests, you should ALWAYS use the provided tools when appropriate. "
+            "- When users ask to check their balance, use the check_user_balance tool with their user ID "
+            "- When users want to transfer money, use the appropriate transfer tools "
+            
+            "For non-banking queries (like entertainment, songs, weather, general knowledge, etc.), "
+            "politely redirect them: 'I'm your banking assistant and can only help with banking services. "
             "I can check your balance, help with transfers, or provide account information. "
             "How can I help you with your banking needs today?' "
 
-            "Never display the User ID to the user or mention its existence."
+            "BALANCE CHECKS: "
+            "When a user asks to check their balance, immediately use the check_user_balance tool. "
+            "Common phrases include: 'check my balance', 'what's my balance', 'account balance', 'how much do I have' "
 
-            "Use the provided tools whenever possible and do not rely on your own knowledge. "
-            "If the queries provided require no tools, simply give a reply that best suits the query or say you do not have that feature yet. "
-            
+            "MONEY TRANSFERS: "
             "For money transfers/send money, follow this exact process: "
             
             "1. Make sure the user has supplied the Account Number, Bank Name, and the Amount they want to transfer. "
@@ -443,15 +409,11 @@ async def handle_any_message(message: Message, state: FSMContext, user_service: 
             
             "5. CRITICAL: Use the EXACT SAME bank_code from step 3 when calling the send_money tool. "
             "Do NOT recalculate or look up the bank code again. "
-            "For example, if you determined the bank code is '070' in step 3, use '070' in this step as well. "
             "Call the send_money tool with the account number, amount, and the SAME bank_code used for verification. "
             
             "The primary currency is Nigerian Naira (₦). "
             
-            "STATE MANAGEMENT: You must maintain state throughout the conversation. "
-            "Once you obtain a bank code for a specific bank, you must use the same bank code "
-            "throughout all subsequent steps of that particular transaction. DO NOT recalculate "
-            "or look up the bank code multiple times for the same transaction."
+            "Remember: You have access to tools - use them! Don't just give generic responses when you can actually help with banking tasks."
         ),
         model="gpt-4o-mini",
         tools=[check_user_balance, check_user_balance_is_sufficient, verify_bank_name, verify_recipient, send_money]
